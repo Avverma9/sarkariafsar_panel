@@ -7,6 +7,7 @@ import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import { useToast } from '../components/Toast.jsx'
 
+const PAGE_SIZE_OPTIONS = ['25', '50', '100', 'full']
 const EMPTY_JOB = {
   title: '', jobtitle: '', advertisement_number: '', conducting_authority: '',
   status: '',
@@ -62,12 +63,15 @@ function jobFromRecord(job = {}) {
 export default function Jobs() {
   const toast = useToast()
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState('25')
   const [search, setSearch] = useState('')
   const [q, setQ] = useState('')
+  const isFullPageSize = pageSize === 'full'
+  const resolvedLimit = isFullPageSize ? '1000' : pageSize
 
   const { data, loading, refetch } = useFetch(
-    () => getJobs({ page: String(page), limit: '15', ...(q ? { search: q } : {}) }),
-    [page, q]
+    () => getJobs({ page: '1', limit: resolvedLimit, ...(q ? { search: q } : {}), ...(!isFullPageSize ? { page: String(page) } : {}) }),
+    [page, q, resolvedLimit, isFullPageSize]
   )
 
   const [formOpen, setFormOpen] = useState(false)
@@ -83,7 +87,7 @@ export default function Jobs() {
   const { mutate: doUpdate, loading: updating } = useMutation(({ id, body }) => updateJob(id, body))
   const { mutate: doDel, loading: deleting } = useMutation((id) => deleteJob(id))
 
-  const totalPages = data?.total ? Math.ceil(data.total / 15) : 1
+  const totalPages = isFullPageSize ? 1 : (data?.total ? Math.ceil(data.total / Number(pageSize)) : 1)
   const pageJobIds = useMemo(() => (data?.jobs || []).map(job => job.id), [data?.jobs])
   const allOnPageSelected = pageJobIds.length > 0 && pageJobIds.every(id => selectedIds.includes(id))
 
@@ -237,7 +241,18 @@ export default function Jobs() {
             </button>
           )}
         </form>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <select
+            className="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={pageSize}
+            onChange={e => { setPageSize(e.target.value); setPage(1) }}
+          >
+            {PAGE_SIZE_OPTIONS.map(option => (
+              <option key={option} value={option}>
+                {option === 'full' ? 'Full' : option}
+              </option>
+            ))}
+          </select>
           {selectedIds.length > 0 && (
             <button
               onClick={() => setBulkDeleteOpen(true)}

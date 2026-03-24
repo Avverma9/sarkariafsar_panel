@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner.jsx'
 import Modal from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 
+const PAGE_SIZE_OPTIONS = ['25', '50', '100', 'full']
 const EMPTY = {
   schemeTitle: '', schemetype: 'Scholarship', state: '', city: '',
   requiredDocs: '', process: '', schemeStartDate: '', schemeLastDate: '',
@@ -62,11 +63,14 @@ function formFromPayload(payload = {}) {
 export default function Schemes() {
   const toast = useToast()
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState('25')
   const [filterState, setFilterState] = useState('')
+  const isFullPageSize = pageSize === 'full'
+  const resolvedLimit = isFullPageSize ? '1000' : pageSize
 
   const { data, loading, refetch } = useFetch(
-    () => getSchemes({ page: String(page), limit: '15', ...(filterState ? { state: filterState } : {}) }),
-    [page, filterState]
+    () => getSchemes({ page: '1', limit: resolvedLimit, ...(filterState ? { state: filterState } : {}), ...(!isFullPageSize ? { page: String(page) } : {}) }),
+    [page, filterState, resolvedLimit, isFullPageSize]
   )
   const { data: statesData } = useFetch(() => getSchemeStates(), [])
 
@@ -79,7 +83,7 @@ export default function Schemes() {
   const { mutate: doCreate, loading: creating } = useMutation((b) => createScheme(b))
   const { mutate: doUpdate, loading: updating } = useMutation(({ id, b }) => updateScheme(id, b))
 
-  const totalPages = data?.total ? Math.ceil(data.total / 15) : 1
+  const totalPages = isFullPageSize ? 1 : (data?.total ? Math.ceil(data.total / Number(pageSize)) : 1)
 
   function openCreate() {
     setEditing(null)
@@ -171,7 +175,18 @@ export default function Schemes() {
             {statesData?.states?.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <select
+            className="text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={pageSize}
+            onChange={e => { setPageSize(e.target.value); setPage(1) }}
+          >
+            {PAGE_SIZE_OPTIONS.map(option => (
+              <option key={option} value={option}>
+                {option === 'full' ? 'Full' : option}
+              </option>
+            ))}
+          </select>
           <button onClick={refetch} className="p-2 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
