@@ -1,273 +1,220 @@
-import { useState } from 'react'
-import { useFetch, useMutation } from '../hooks/useFetch.js'
-import { getSections, createSection, updateSection, deleteSection, seedSections } from '../api.js'
-import { Plus, Pencil, Trash2, RefreshCw, Sprout } from 'lucide-react'
-import Spinner from '../components/Spinner.jsx'
-import Modal from '../components/Modal.jsx'
-import ConfirmDialog from '../components/ConfirmDialog.jsx'
-import { useToast } from '../components/Toast.jsx'
-
-const EMPTY = { name: '', canonicalUrl: '', status: 'active' }
-const prettyJson = (value) => JSON.stringify(value, null, 2)
-
-async function copyText(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  const el = document.createElement('textarea')
-  el.value = text
-  el.setAttribute('readonly', '')
-  el.style.position = 'fixed'
-  el.style.opacity = '0'
-  document.body.appendChild(el)
-  el.select()
-  document.execCommand('copy')
-  document.body.removeChild(el)
-}
-
-async function readClipboardText() {
-  if (navigator.clipboard?.readText) return navigator.clipboard.readText()
-  const manual = window.prompt('Clipboard paste supported nahi mila. Yahan JSON paste karein:')
-  return manual ?? ''
-}
+import React, { useState, useEffect } from 'react';
+import { 
+  Plus, Search, Edit2, Trash2, CheckCircle2,
+  XCircle, Hash, AlertTriangle
+} from 'lucide-react';
+import api from '../services/api';
+import { cn } from '../lib/utils';
+import Modal from '../components/Modal';
 
 export default function Sections() {
-  const toast = useToast()
-  const { data, loading, refetch } = useFetch(() => getSections(), [])
-  const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState(EMPTY)
-  const [inputMode, setInputMode] = useState('form')
-  const [jsonDraft, setJsonDraft] = useState(prettyJson(EMPTY))
-  const [delTarget, setDelTarget] = useState(null)
+  const [sections, setSections] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [error, setError] = useState(null);
 
-  const { mutate: doCreate, loading: creating } = useMutation((b) => createSection(b))
-  const { mutate: doUpdate, loading: updating } = useMutation(({ id, b }) => updateSection(id, b))
-  const { mutate: doDel, loading: deleting } = useMutation((id) => deleteSection(id))
-  const { mutate: doSeed, loading: seeding } = useMutation(() => seedSections())
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [formData, setFormData] = useState({ name: '', status: 'active' });
+  const [isSaving, setIsSaving] = useState(false);
 
-  function openCreate() {
-    setEditing(null)
-    setForm(EMPTY)
-    setInputMode('form')
-    setJsonDraft(prettyJson(EMPTY))
-    setFormOpen(true)
-  }
-
-  function openEdit(s) {
-    const nextForm = {
-      name: s.name || '',
-      canonicalUrl: s.canonicalUrl || '',
-      status: s.status || 'active',
-    }
-    setEditing(s)
-    setForm(nextForm)
-    setInputMode('form')
-    setJsonDraft(prettyJson(nextForm))
-    setFormOpen(true)
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
+  const fetchSections = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const body = inputMode === 'json' ? JSON.parse(jsonDraft) : form
-      if (editing) {
-        await doUpdate({ id: editing.id, b: body })
-        toast('Section updated', 'success')
-      } else {
-        await doCreate(body)
-        toast('Section created', 'success')
+      const response = await api.get('/post-section/', {
+        params: { search }
+      });
+      setSections(response.data.data || []);
+    } catch (err) {
+      setError('Unable to load sections. Please check your network connection or try again later.');
+      setSections([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSections();
+  }, []);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    fetchSections();
+  };
+
+  const toggleStatus = async (section) => {
+    try {
+      const newStatus = section.status === 'active' ? 'inactive' : 'active';
+      const response = await api.put(`/post-section/id/${section._id}`, {
+        data: { status: newStatus }
+      });
+      if (response.data.success) {
+        setSections(sections.map(s => s._id === section._id ? { ...s, status: newStatus } : s));
       }
-      setFormOpen(false)
-      refetch()
+    } catch (error) {
+      console.error('Failed to toggle status:', error);
+    }
+  };
+
+  const deleteSection = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this section?')) return;
+    try {
+      const response = await api.delete(`/post-section/id/${id}`);
+      if (response.data.success) {
+        setSections(sections.filter(s => s._id !== id));
+      }
+    } catch (error) {
+      console.error('Failed to delete section:', error);
+    }
+  };
+
+  const openModal = (section = null) => {
+    if (section) {
+      setEditingId(section._id);
+      setFormData({ name: section.name || '', status: section.status || 'active' });
+    } else {
+      setEditingId(null);
+      setFormData({ name: '', status: 'active' });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      if (editingId) {
+        await api.put(`/post-section/id/${editingId}`, { data: formData });
+      } else {
+        await api.post('/post-section/add', { data: formData });
+      }
+      setIsModalOpen(false);
+      fetchSections();
     } catch (err) {
-      toast(err instanceof SyntaxError ? 'Invalid JSON. Please check the payload.' : err.message, 'error')
+      console.error(err);
+      alert(err.response?.data?.message || 'Failed to save section');
+    } finally {
+      setIsSaving(false);
     }
-  }
-
-  async function handleDelete() {
-    try {
-      await doDel(delTarget.id)
-      toast('Section deleted', 'success')
-      setDelTarget(null)
-      refetch()
-    } catch (err) {
-      toast(err.message, 'error')
-    }
-  }
-
-  async function handleSeed() {
-    try {
-      const r = await doSeed()
-      toast(`Seeded: ${r.created} created, ${r.updated} updated`, 'success')
-      refetch()
-    } catch (err) {
-      toast(err.message, 'error')
-    }
-  }
-
-  const f = (k) => (e) => {
-    const nextForm = { ...form, [k]: e.target.value }
-    setForm(nextForm)
-    if (inputMode === 'form') setJsonDraft(prettyJson(nextForm))
-  }
-
-  function switchMode(mode) {
-    if (mode === inputMode) return
-    if (mode === 'json') {
-      setJsonDraft(prettyJson(form))
-      setInputMode('json')
-      return
-    }
-    try {
-      const parsed = JSON.parse(jsonDraft)
-      setForm({
-        name: parsed?.name || '',
-        canonicalUrl: parsed?.canonicalUrl || '',
-        status: parsed?.status || 'active',
-      })
-      setInputMode('form')
-    } catch {
-      toast('Valid JSON is required before switching back to form view.', 'error')
-    }
-  }
-
-  async function handleCopyJson() {
-    try {
-      await copyText(jsonDraft)
-      toast('JSON copied', 'success')
-    } catch {
-      toast('Copy failed. Please copy manually.', 'error')
-    }
-  }
-
-  async function handlePasteJson() {
-    try {
-      const text = await readClipboardText()
-      if (!text) return
-      setJsonDraft(text)
-      toast('JSON pasted', 'success')
-    } catch {
-      toast('Paste blocked. Please paste manually.', 'error')
-    }
-  }
+  };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
-      <div className="flex gap-2 justify-end">
-        <button onClick={handleSeed} disabled={seeding}
-          className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-60">
-          {seeding ? <Spinner size={14} /> : <Sprout size={14} />} Seed Defaults
-        </button>
-        <button onClick={refetch}
-          className="p-2 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-        </button>
-        <button onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
-          <Plus size={16} /> Add Section
-        </button>
-      </div>
-
-      <div className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-800">
-          <span className="text-xs text-gray-500">{data?.total ?? 0} sections</span>
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Sections Manager</h2>
+          <p className="text-sm text-slate-500 mt-1">Organize job posts into categories and sections.</p>
         </div>
-        {loading ? (
-          <div className="flex justify-center py-12"><Spinner size={26} /></div>
-        ) : data?.sections?.length === 0 ? (
-          <p className="text-center text-gray-400 py-12 text-sm">No sections. Click "Seed Defaults" to add them.</p>
-        ) : (
-          <div className="divide-y divide-gray-50 dark:divide-gray-800">
-            {data?.sections?.map(s => (
-              <div key={s.id} className="px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{s.name}</p>
-                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">{s.canonicalUrl}</p>
-                </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full
-                  ${s.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-800'}`}>
-                  {s.status}
-                </span>
-                <div className="flex gap-1">
-                  <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950">
-                    <Pencil size={14} />
-                  </button>
-                  <button onClick={() => setDelTarget(s)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all cursor-pointer">
+          <Plus size={18} />
+          Create Section
+        </button>
       </div>
 
-      <Modal title={editing ? 'Edit Section' : 'Add Section'} open={formOpen} onClose={() => setFormOpen(false)}>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex gap-2 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
-            <button type="button" onClick={() => switchMode('form')} className={tabCls(inputMode === 'form')}>Form</button>
-            <button type="button" onClick={() => switchMode('json')} className={tabCls(inputMode === 'json')}>JSON</button>
-          </div>
+      <div className="bg-white rounded-2xl border border-dashboard-border shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-dashboard-border bg-slate-50/50">
+          <form onSubmit={handleSearch} className="relative w-full md:w-96">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search sections..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-white border border-dashboard-border rounded-lg text-sm outline-none focus:border-blue-500 transition-all"
+            />
+          </form>
+        </div>
 
-          {inputMode === 'form' ? (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name *</label>
-                <input required className={inp} value={form.name} onChange={f('name')} placeholder="Latest Gov Jobs" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Canonical URL</label>
-                <input className={inp} value={form.canonicalUrl} onChange={f('canonicalUrl')} placeholder="latest-gov-jobs" />
-                <p className="text-[11px] text-gray-400 mt-1">Leave blank - auto-generated from name</p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Status</label>
-                <select className={inp} value={form.status} onChange={f('status')}>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
-            </>
-          ) : (
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">Section JSON</label>
-                <div className="flex gap-2">
-                  <button type="button" onClick={handleCopyJson} className={jsonBtnCls}>Copy JSON</button>
-                  <button type="button" onClick={handlePasteJson} className={jsonBtnCls}>Paste JSON</button>
-                </div>
-              </div>
-              <textarea
-                required
-                rows={14}
-                className={`${inp} font-mono`}
-                value={jsonDraft}
-                onChange={e => setJsonDraft(e.target.value)}
-                placeholder='{"name":"Latest Gov Jobs","canonicalUrl":"latest-gov-jobs","status":"active"}'
-              />
-              <p className="text-[11px] text-gray-400 mt-1">Raw JSON payload submit hoga.</p>
+        <div className="overflow-x-auto custom-scrollbar">
+          {error && (
+            <div className="p-4 m-4 bg-orange-50 border border-orange-200 rounded-xl text-orange-800 text-sm flex items-center gap-2">
+              <AlertTriangle size={16} />
+              {error}
             </div>
           )}
+          <table className="sa-table">
+            <thead>
+              <tr>
+                <th>Section Name</th>
+                <th>Slug / Canonical</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                [1, 2, 3].map(i => (
+                  <tr key={i} className="animate-pulse">
+                    <td colSpan="4" className="p-4"><div className="h-12 bg-slate-100 rounded-lg"></div></td>
+                  </tr>
+                ))
+              ) : sections.length > 0 ? sections.map((section) => (
+                <tr key={section._id} className="group">
+                  <td className="whitespace-nowrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0 border border-blue-100">
+                        <Hash size={18} />
+                      </div>
+                      <span className="font-bold text-slate-900">{section.name}</span>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap">
+                    <code className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg text-slate-600 font-mono font-bold">/{section.slug}</code>
+                  </td>
+                  <td className="whitespace-nowrap">
+                    <button 
+                      onClick={() => toggleStatus(section)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer border",
+                        section.status === 'active' 
+                          ? "bg-green-100 text-green-700 border-green-200 shadow-sm shadow-green-100" 
+                          : "bg-red-100 text-red-700 border-red-200 shadow-sm shadow-red-100"
+                      )}
+                    >
+                      {section.status === 'active' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                      {section.status === 'active' ? 'Active' : 'Inactive'}
+                    </button>
+                  </td>
+                  <td className="whitespace-nowrap text-right">
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openModal(section)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Edit"><Edit2 size={16} /></button>
+                      <button onClick={() => deleteSection(section._id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer" title="Delete"><Trash2 size={16} /></button>
+                    </div>
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan="4" className="p-12 text-center text-slate-400 text-sm font-medium">No sections found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">Cancel</button>
-            <button type="submit" disabled={creating || updating} className="flex items-center gap-2 px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60">
-              {(creating || updating) && <Spinner size={14} />}
-              {editing ? 'Update' : 'Create'}
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingId ? "Edit Section" : "Create Section"}>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Section Name</label>
+            <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" placeholder="e.g. Admit Card" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Status</label>
+            <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500 cursor-pointer">
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-dashboard-border mt-6">
+            <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer">Cancel</button>
+            <button type="submit" disabled={isSaving} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-md transition-colors disabled:opacity-50 cursor-pointer">
+              {isSaving ? 'Saving...' : 'Save Section'}
             </button>
           </div>
         </form>
       </Modal>
-
-      <ConfirmDialog open={!!delTarget} title="Delete Section"
-        message={`Delete "${delTarget?.name}"?`}
-        onConfirm={handleDelete} onCancel={() => setDelTarget(null)} loading={deleting} />
     </div>
-  )
+  );
 }
-
-const inp = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500'
-const tabCls = (active) => `flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${active ? 'bg-white dark:bg-gray-900 text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`
-const jsonBtnCls = 'px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800'

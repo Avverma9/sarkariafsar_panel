@@ -1,331 +1,264 @@
-import { useState } from 'react'
-import { useFetch, useMutation } from '../hooks/useFetch.js'
-import { getSchemes, getSchemeStates, createScheme, updateScheme } from '../api.js'
-import { Plus, Pencil, RefreshCw, ChevronLeft, ChevronRight, Filter } from 'lucide-react'
-import Spinner from '../components/Spinner.jsx'
-import Modal from '../components/Modal.jsx'
-import { useToast } from '../components/Toast.jsx'
-
-const PAGE_SIZE_OPTIONS = ['25', '50', '100', 'full']
-const EMPTY = {
-  schemeTitle: '', schemetype: 'Scholarship', state: '', city: '',
-  requiredDocs: '', process: '', schemeStartDate: '', schemeLastDate: '',
-  applyLink: '', aboutScheme: '',
-}
-const prettyJson = (value) => JSON.stringify(value, null, 2)
-
-async function copyText(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  const el = document.createElement('textarea')
-  el.value = text
-  el.setAttribute('readonly', '')
-  el.style.position = 'fixed'
-  el.style.opacity = '0'
-  document.body.appendChild(el)
-  el.select()
-  document.execCommand('copy')
-  document.body.removeChild(el)
-}
-
-async function readClipboardText() {
-  if (navigator.clipboard?.readText) return navigator.clipboard.readText()
-  const manual = window.prompt('Clipboard paste supported nahi mila. Yahan JSON paste karein:')
-  return manual ?? ''
-}
-
-function createPayloadFromForm(form) {
-  return {
-    ...form,
-    requiredDocs: form.requiredDocs
-      ? form.requiredDocs.split(',').map(d => d.trim()).filter(Boolean)
-      : [],
-  }
-}
-
-function formFromPayload(payload = {}) {
-  return {
-    schemeTitle: payload.schemeTitle || '',
-    schemetype: payload.schemetype || 'Scholarship',
-    state: payload.state || '',
-    city: payload.city || '',
-    requiredDocs: Array.isArray(payload.requiredDocs) ? payload.requiredDocs.join(', ') : (payload.requiredDocs || ''),
-    process: payload.process || '',
-    schemeStartDate: payload.schemeStartDate?.slice?.(0, 10) || payload.schemeStartDate || '',
-    schemeLastDate: payload.schemeLastDate?.slice?.(0, 10) || payload.schemeLastDate || '',
-    applyLink: payload.applyLink || '',
-    aboutScheme: payload.aboutScheme || '',
-  }
-}
+import React, { useState, useEffect } from 'react';
+import { Plus, Search, Edit2, Trash2, BookOpen, ExternalLink, CheckCircle2, XCircle, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import api from '../services/api';
+import { cn } from '../lib/utils';
+import Modal from '../components/Modal';
 
 export default function Schemes() {
-  const toast = useToast()
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState('25')
-  const [filterState, setFilterState] = useState('')
-  const isFullPageSize = pageSize === 'full'
-  const resolvedLimit = isFullPageSize ? '1000' : pageSize
+  const [schemes, setSchemes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const { data, loading, refetch } = useFetch(
-    () => getSchemes({ page: '1', limit: resolvedLimit, ...(filterState ? { state: filterState } : {}), ...(!isFullPageSize ? { page: String(page) } : {}) }),
-    [page, filterState, resolvedLimit, isFullPageSize]
-  )
-  const { data: statesData } = useFetch(() => getSchemeStates(), [])
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingSlug, setEditingSlug] = useState(null);
+  const [formData, setFormData] = useState({
+    schemeTitle: '', slug: '', schemetype: '', state: '', aboutScheme: '', officialSourceUrl: '', isActive: true
+  });
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState(EMPTY)
-  const [inputMode, setInputMode] = useState('form')
-  const [jsonDraft, setJsonDraft] = useState(prettyJson(createPayloadFromForm(EMPTY)))
-
-  const { mutate: doCreate, loading: creating } = useMutation((b) => createScheme(b))
-  const { mutate: doUpdate, loading: updating } = useMutation(({ id, b }) => updateScheme(id, b))
-
-  const totalPages = isFullPageSize ? 1 : (data?.total ? Math.ceil(data.total / Number(pageSize)) : 1)
-
-  function openCreate() {
-    setEditing(null)
-    setForm(EMPTY)
-    setInputMode('form')
-    setJsonDraft(prettyJson(createPayloadFromForm(EMPTY)))
-    setFormOpen(true)
-  }
-
-  function openEdit(s) {
-    const nextForm = formFromPayload(s)
-    setEditing(s)
-    setForm(nextForm)
-    setInputMode('form')
-    setJsonDraft(prettyJson(createPayloadFromForm(nextForm)))
-    setFormOpen(true)
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
+  const fetchSchemes = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const body = inputMode === 'json' ? JSON.parse(jsonDraft) : createPayloadFromForm(form)
-      if (editing) {
-        await doUpdate({ id: editing.id, b: body })
-        toast('Scheme updated', 'success')
-      } else {
-        await doCreate(body)
-        toast('Scheme created', 'success')
-      }
-      setFormOpen(false)
-      refetch()
+      const response = await api.get('/schemes/', {
+        params: { page, limit: 10, search }
+      });
+      setSchemes(response.data.data || []);
+      setTotalPages(response.data.pagination?.totalPages || 1);
     } catch (err) {
-      toast(err instanceof SyntaxError ? 'Invalid JSON. Please check the payload.' : err.message, 'error')
+      setError('Unable to load schemes. Please check your network connection.');
+      setSchemes([]);
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
-  const f = (k) => (e) => {
-    const nextForm = { ...form, [k]: e.target.value }
-    setForm(nextForm)
-    if (inputMode === 'form') setJsonDraft(prettyJson(createPayloadFromForm(nextForm)))
-  }
+  useEffect(() => {
+    fetchSchemes();
+  }, [page]);
 
-  function switchMode(mode) {
-    if (mode === inputMode) return
-    if (mode === 'json') {
-      setJsonDraft(prettyJson(createPayloadFromForm(form)))
-      setInputMode('json')
-      return
-    }
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    fetchSchemes();
+  };
+
+  const toggleStatus = async (scheme) => {
     try {
-      setForm(formFromPayload(JSON.parse(jsonDraft)))
-      setInputMode('form')
-    } catch {
-      toast('Valid JSON is required before switching back to form view.', 'error')
+      const response = await api.put(`/schemes/slug/${scheme.slug}`, {
+        data: { isActive: !scheme.isActive }
+      });
+      if (response.data.success) {
+        setSchemes(schemes.map(s => s._id === scheme._id ? { ...s, isActive: !s.isActive } : s));
+      }
+    } catch (error) {
+      console.error('Failed to toggle status:', error);
     }
-  }
+  };
 
-  async function handleCopyJson() {
+  const deleteScheme = async (slug) => {
+    if (!window.confirm('Are you sure you want to delete this scheme?')) return;
     try {
-      await copyText(jsonDraft)
-      toast('JSON copied', 'success')
-    } catch {
-      toast('Copy failed. Please copy manually.', 'error')
+      const response = await api.delete(`/schemes/slug/${slug}`);
+      if (response.data.success) {
+        setSchemes(schemes.filter(s => s.slug !== slug));
+      }
+    } catch (error) {
+      console.error('Failed to delete scheme:', error);
     }
-  }
+  };
 
-  async function handlePasteJson() {
-    try {
-      const text = await readClipboardText()
-      if (!text) return
-      setJsonDraft(text)
-      toast('JSON pasted', 'success')
-    } catch {
-      toast('Paste blocked. Please paste manually.', 'error')
+  const openModal = (scheme = null) => {
+    if (scheme) {
+      setEditingSlug(scheme.slug);
+      setFormData({
+        schemeTitle: scheme.schemeTitle || '', slug: scheme.slug || '',
+        schemetype: scheme.schemetype || '', state: scheme.state || '',
+        aboutScheme: scheme.aboutScheme || '', officialSourceUrl: scheme.officialSourceUrl || '',
+        isActive: scheme.isActive ?? true
+      });
+    } else {
+      setEditingSlug(null);
+      setFormData({
+        schemeTitle: '', slug: '', schemetype: '', state: '', aboutScheme: '', officialSourceUrl: '', isActive: true
+      });
     }
-  }
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      if (editingSlug) {
+        await api.put(`/schemes/slug/${editingSlug}`, { data: formData });
+      } else {
+        await api.post('/schemes/add', { data: formData });
+      }
+      setIsModalOpen(false);
+      fetchSchemes();
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.message || 'Failed to save scheme');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4">
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="flex items-center gap-2 flex-1">
-          <Filter size={14} className="text-gray-400 flex-shrink-0" />
-          <select
-            className="text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={filterState}
-            onChange={e => { setFilterState(e.target.value); setPage(1) }}
-          >
-            <option value="">All States</option>
-            {statesData?.states?.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Schemes Manager</h2>
+          <p className="text-sm text-slate-500 mt-1">Manage government schemes and yojanas.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <select
-            className="text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={pageSize}
-            onChange={e => { setPageSize(e.target.value); setPage(1) }}
-          >
-            {PAGE_SIZE_OPTIONS.map(option => (
-              <option key={option} value={option}>
-                {option === 'full' ? 'Full' : option}
-              </option>
-            ))}
-          </select>
-          <button onClick={refetch} className="p-2 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
-            <Plus size={16} /> Add Scheme
-          </button>
+        <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all cursor-pointer">
+          <Plus size={18} />
+          Add Scheme
+        </button>
+      </div>
+
+      <div className="sa-table-container">
+        <div className="p-4 border-b border-dashboard-border bg-slate-50/50">
+          <form onSubmit={handleSearch} className="relative w-full md:w-96">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search schemes..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-white border border-dashboard-border rounded-xl text-sm outline-none focus:border-blue-500 transition-all"
+            />
+          </form>
+        </div>
+
+        <div className="overflow-x-auto custom-scrollbar">
+          {error && (
+            <div className="p-4 m-4 bg-orange-50 border border-orange-200 rounded-xl text-orange-800 text-sm flex items-center gap-2">
+              <AlertTriangle size={16} />
+              {error}
+            </div>
+          )}
+          <table className="sa-table">
+            <thead>
+              <tr>
+                <th>Scheme Title</th>
+                <th>State</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                [1, 2, 3, 4].map(i => (
+                  <tr key={i} className="animate-pulse">
+                    <td colSpan="5" className="p-4"><div className="h-12 bg-slate-100 rounded-lg"></div></td>
+                  </tr>
+                ))
+              ) : schemes.length > 0 ? schemes.map((scheme) => (
+                <tr key={scheme._id} className="group">
+                  <td className="min-w-[300px] max-w-md">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center shrink-0 border border-emerald-100">
+                        <BookOpen size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 truncate" title={scheme.schemeTitle}>{scheme.schemeTitle}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">{scheme.slug}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap font-bold text-slate-700">{scheme.state || 'All India'}</td>
+                  <td className="whitespace-nowrap">
+                    <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-slate-200">
+                      {scheme.schemetype || 'General'}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap">
+                    <button 
+                      onClick={() => toggleStatus(scheme)}
+                      className={cn(
+                        "flex items-center gap-1.5 w-max px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider cursor-pointer border transition-all",
+                        scheme.isActive !== false 
+                          ? "bg-green-100 text-green-700 border-green-200 shadow-sm shadow-green-100" 
+                          : "bg-red-100 text-red-700 border-red-200 shadow-sm shadow-red-100"
+                      )}
+                    >
+                      {scheme.isActive !== false ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                      {scheme.isActive !== false ? 'Active' : 'Inactive'}
+                    </button>
+                  </td>
+                  <td className="whitespace-nowrap text-right">
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openModal(scheme)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer" title="Edit"><Edit2 size={16} /></button>
+                      <button onClick={() => deleteScheme(scheme.slug)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer" title="Delete"><Trash2 size={16} /></button>
+                      <button className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all cursor-pointer" title="View"><ExternalLink size={16} /></button>
+                    </div>
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan="5" className="p-12 text-center text-slate-400 text-sm font-medium">No schemes found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="p-4 border-t border-dashboard-border flex items-center justify-between bg-slate-50/50">
+          <p className="text-xs text-slate-500 font-bold">Page <span className="text-slate-900">{page}</span> of <span className="text-slate-900">{totalPages}</span></p>
+          <div className="flex items-center gap-2">
+            <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="p-2 border border-dashboard-border rounded-xl hover:bg-white disabled:opacity-50 transition-all cursor-pointer bg-white shadow-sm"><ChevronLeft size={16} /></button>
+            <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)} className="p-2 border border-dashboard-border rounded-xl hover:bg-white disabled:opacity-50 transition-all cursor-pointer bg-white shadow-sm"><ChevronRight size={16} /></button>
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16"><Spinner size={28} /></div>
-      ) : data?.schemes?.length === 0 ? (
-        <p className="text-center text-gray-400 py-16 text-sm">No schemes found</p>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data?.schemes?.map(s => (
-            <div key={s.id} className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-4 flex flex-col gap-2">
-              <div className="flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold leading-snug">{s.schemeTitle}</p>
-                  <p className="text-[11px] text-gray-400 mt-0.5">{s.state}{s.city ? ` · ${s.city}` : ''}</p>
-                </div>
-                <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 rounded-lg flex-shrink-0">
-                  <Pencil size={14} />
-                </button>
-              </div>
-              <span className="self-start text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
-                {s.schemetype || 'Scheme'}
-              </span>
-              {s.applyLink && (
-                <a href={s.applyLink} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline truncate">Apply ↗</a>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800">
-            <ChevronLeft size={14} /> Prev
-          </button>
-          <span className="text-xs text-gray-500">Page {page} / {totalPages}</span>
-          <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800">
-            Next <ChevronRight size={14} />
-          </button>
-        </div>
-      )}
-
-      <Modal title={editing ? 'Edit Scheme' : 'Add Scheme'} open={formOpen} onClose={() => setFormOpen(false)} wide>
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingSlug ? "Edit Scheme" : "Add Scheme"}>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex gap-2 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
-            <button type="button" onClick={() => switchMode('form')} className={tabCls(inputMode === 'form')}>Form</button>
-            <button type="button" onClick={() => switchMode('json')} className={tabCls(inputMode === 'json')}>JSON</button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Scheme Title</label>
+              <input type="text" required value={formData.schemeTitle} onChange={e => setFormData({...formData, schemeTitle: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Slug</label>
+              <input type="text" required value={formData.slug} onChange={e => setFormData({...formData, slug: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Type</label>
+              <input type="text" value={formData.schemetype} onChange={e => setFormData({...formData, schemetype: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">State</label>
+              <input type="text" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Official Source URL</label>
+              <input type="url" value={formData.officialSourceUrl} onChange={e => setFormData({...formData, officialSourceUrl: e.target.value})} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">About Scheme</label>
+              <textarea value={formData.aboutScheme} onChange={e => setFormData({...formData, aboutScheme: e.target.value})} rows={3} className="w-full bg-slate-50 border border-dashboard-border rounded-lg py-2 px-3 text-sm outline-none focus:border-blue-500 resize-none" />
+            </div>
+            <div className="md:col-span-2 flex items-center gap-2 mt-2">
+              <input type="checkbox" id="isActive" checked={formData.isActive} onChange={e => setFormData({...formData, isActive: e.target.checked})} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer" />
+              <label htmlFor="isActive" className="text-sm font-medium text-slate-700 cursor-pointer">Scheme is Active</label>
+            </div>
           </div>
-
-          {inputMode === 'form' ? (
-            <>
-              <Row label="Scheme Title *">
-                <input required className={inp} value={form.schemeTitle} onChange={f('schemeTitle')} />
-              </Row>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Row label="Type">
-                  <select className={inp} value={form.schemetype} onChange={f('schemetype')}>
-                    {['Scholarship', 'Pension', 'Housing', 'Employment', 'Healthcare', 'Agriculture', 'Education', 'Other'].map(t => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </Row>
-                <Row label="State">
-                  <input className={inp} value={form.state} onChange={f('state')} placeholder="Uttar Pradesh" />
-                </Row>
-              </div>
-              <Row label="City">
-                <input className={inp} value={form.city} onChange={f('city')} />
-              </Row>
-              <Row label="Required Docs (comma separated)">
-                <input className={inp} value={form.requiredDocs} onChange={f('requiredDocs')} placeholder="Aadhaar Card, Income Certificate" />
-              </Row>
-              <Row label="Process">
-                <textarea rows={3} className={inp} value={form.process} onChange={f('process')} />
-              </Row>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Row label="Start Date">
-                  <input type="date" className={inp} value={form.schemeStartDate} onChange={f('schemeStartDate')} />
-                </Row>
-                <Row label="Last Date">
-                  <input type="date" className={inp} value={form.schemeLastDate} onChange={f('schemeLastDate')} />
-                </Row>
-              </div>
-              <Row label="Apply Link">
-                <input className={inp} value={form.applyLink} onChange={f('applyLink')} placeholder="https://" />
-              </Row>
-              <Row label="About Scheme">
-                <textarea rows={3} className={inp} value={form.aboutScheme} onChange={f('aboutScheme')} />
-              </Row>
-            </>
-          ) : (
-            <Row label="Scheme JSON">
-              <div className="flex justify-end gap-2 mb-2">
-                <button type="button" onClick={handleCopyJson} className={jsonBtnCls}>Copy JSON</button>
-                <button type="button" onClick={handlePasteJson} className={jsonBtnCls}>Paste JSON</button>
-              </div>
-              <textarea
-                required
-                rows={18}
-                className={`${inp} font-mono`}
-                value={jsonDraft}
-                onChange={e => setJsonDraft(e.target.value)}
-                placeholder='{"schemeTitle":"PM Scholarship","requiredDocs":["Aadhaar Card"]}'
-              />
-            </Row>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">Cancel</button>
-            <button type="submit" disabled={creating || updating} className="flex items-center gap-2 px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60">
-              {(creating || updating) && <Spinner size={14} />}
-              {editing ? 'Update' : 'Create'}
+          <div className="flex justify-end gap-3 pt-4 border-t border-dashboard-border mt-6">
+            <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer">Cancel</button>
+            <button type="submit" disabled={isSaving} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-md transition-colors disabled:opacity-50 cursor-pointer">
+              {isSaving ? 'Saving...' : 'Save Scheme'}
             </button>
           </div>
         </form>
       </Modal>
     </div>
-  )
-}
-
-const inp = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500'
-const tabCls = (active) => `flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${active ? 'bg-white dark:bg-gray-900 text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`
-const jsonBtnCls = 'px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800'
-
-function Row({ label, children }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{label}</label>
-      {children}
-    </div>
-  )
+  );
 }
