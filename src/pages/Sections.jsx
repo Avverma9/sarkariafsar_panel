@@ -189,7 +189,8 @@ export default function Sections() {
                   </tr>
                 ))
               ) : sections.length > 0 ? sections.map((section) => (
-                <tr key={section._id} className="group">
+                <React.Fragment key={section._id}>
+                  <tr className="group">
                   <td className="whitespace-nowrap">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0 border border-blue-100">
@@ -224,10 +225,10 @@ export default function Sections() {
                       <button onClick={() => deleteSection(section._id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer" title="Delete"><Trash2 size={16} /></button>
                     </div>
                   </td>
-                </tr>
+                  </tr>
 
-                {expandedSections.includes(section._id) && (
-                  <tr key={`${section._id}-jobs`} className="bg-slate-50">
+                  {expandedSections.includes(section._id) && (
+                    <tr key={`${section._id}-jobs`} className="bg-slate-50">
                     <td colSpan="4" className="p-4">
                       <div className="space-y-3">
                         {jobsLoading[section._id] ? (
@@ -280,7 +281,8 @@ export default function Sections() {
                       </div>
                     </td>
                   </tr>
-                )}
+                  )}
+                </React.Fragment>
               )) : (
                 <tr>
                   <td colSpan="4" className="p-12 text-center text-slate-400 text-sm font-medium">No sections found.</td>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, Filter, MoreVertical, Edit2, Trash2, ExternalLink,
-  CheckCircle2, XCircle, ChevronLeft, ChevronRight, AlertTriangle
+  CheckCircle2, XCircle, ChevronLeft, ChevronRight, AlertTriangle,
+  Users, Copy, Check
 } from 'lucide-react';
 import api from '../services/api';
 import { cn, formatDate } from '../lib/utils';
@@ -15,7 +16,15 @@ export default function Jobs() {
   const [totalPages, setTotalPages] = useState(1);
   const [sections, setSections] = useState([]);
   const [sectionCanonicalUrl, setSectionCanonicalUrl] = useState('');
+  const [states, setStates] = useState([]);
+  const [selectedState, setSelectedState] = useState('');
   const [error, setError] = useState(null);
+
+  // Authority List State
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authorities, setAuthorities] = useState([]);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,29 +37,30 @@ export default function Jobs() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    const fetchSections = async () => {
+    const fetchInitialData = async () => {
       try {
-        const response = await api.get('/post-section/');
-        setSections(response.data.data || []);
+        const [secRes, stateRes] = await Promise.all([
+          api.get('/post-section/'),
+          api.get('/post/states')
+        ]);
+        setSections(secRes.data.data || []);
+        setStates(stateRes.data.data || []);
       } catch (err) {
-        console.error('Failed to fetch sections:', err);
+        console.error('Failed to fetch initial data:', err);
       }
     };
-    fetchSections();
+    fetchInitialData();
   }, []);
 
   const fetchJobs = async () => {
     setLoading(true);
     setError(null);
     try {
-      let endpoint = '/post/';
-      let params = { page, limit: 10, search };
-      
-      if (sectionCanonicalUrl) {
-        endpoint = `/post/section/${sectionCanonicalUrl}`;
-      }
+      const params = { page, limit: 10, search };
+      if (selectedState) params.state = selectedState;
+      if (sectionCanonicalUrl) params.sectionCanonicalUrl = sectionCanonicalUrl;
 
-      const response = await api.get(endpoint, { params });
+      const response = await api.get('/post/filter', { params });
       setJobs(response.data.data || []);
       setTotalPages(response.data.pagination?.totalPages || 1);
     } catch (err) {
@@ -63,7 +73,28 @@ export default function Jobs() {
 
   useEffect(() => {
     fetchJobs();
-  }, [page, sectionCanonicalUrl]);
+  }, [page, sectionCanonicalUrl, selectedState]);
+
+  const fetchAuthorities = async () => {
+    setAuthLoading(true);
+    try {
+      const response = await api.get('/post/authorities-list');
+      setAuthorities(response.data.data || []);
+      setIsAuthModalOpen(true);
+    } catch (err) {
+      console.error('Failed to fetch authorities:', err);
+      alert('Failed to fetch authorities list');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const copyAuthorities = () => {
+    const jsonStr = JSON.stringify(authorities, null, 2);
+    navigator.clipboard.writeText(jsonStr);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -169,10 +200,20 @@ export default function Jobs() {
           <h2 className="text-2xl font-bold text-slate-900">Job Posts Manager</h2>
           <p className="text-sm text-slate-500 mt-1">Manage and monitor all government job listings.</p>
         </div>
-        <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all cursor-pointer">
-          <Plus size={18} />
-          Add New Job
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={fetchAuthorities} 
+            disabled={authLoading}
+            className="bg-white border border-dashboard-border text-slate-600 px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-all cursor-pointer"
+          >
+            <Users size={18} />
+            {authLoading ? 'Loading...' : 'Authority List'}
+          </button>
+          <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl font-semibold flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all cursor-pointer">
+            <Plus size={18} />
+            Add New Job
+          </button>
+        </div>
       </div>
 
       <div className="sa-table-container">
@@ -188,7 +229,7 @@ export default function Jobs() {
             />
           </form>
 
-          <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             <div className="flex items-center gap-2 bg-white border border-dashboard-border rounded-xl px-3 py-2 shadow-sm">
               <Filter size={14} className="text-slate-400" />
               <select 
@@ -198,6 +239,18 @@ export default function Jobs() {
               >
                 <option value="">All Sections</option>
                 {sections.map(sec => <option key={sec._id} value={sec.slug}>{sec.name}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-white border border-dashboard-border rounded-xl px-3 py-2 shadow-sm">
+              <Filter size={14} className="text-slate-400" />
+              <select 
+                value={selectedState}
+                onChange={(e) => { setSelectedState(e.target.value); setPage(1); }}
+                className="text-sm outline-none bg-transparent text-slate-600 font-bold cursor-pointer"
+              >
+                <option value="">All States</option>
+                {states.map(state => <option key={state} value={state}>{state}</option>)}
               </select>
             </div>
           </div>
@@ -385,6 +438,31 @@ export default function Jobs() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} title="Authority List (JSON)">
+        <div className="space-y-4">
+          <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-dashboard-border">
+            <span className="text-sm font-bold text-slate-700">{authorities.length} Authorities Found</span>
+            <button 
+              onClick={copyAuthorities}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-dashboard-border rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-all cursor-pointer"
+            >
+              {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+              {copied ? 'Copied!' : 'Copy JSON'}
+            </button>
+          </div>
+          <div className="bg-slate-900 rounded-xl p-4 overflow-hidden">
+            <pre className="text-xs text-blue-400 overflow-auto max-h-[400px] custom-scrollbar font-mono leading-relaxed">
+              {JSON.stringify(authorities, null, 2)}
+            </pre>
+          </div>
+          <div className="flex justify-end pt-2">
+            <button onClick={() => setIsAuthModalOpen(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all cursor-pointer">
+              Close
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
